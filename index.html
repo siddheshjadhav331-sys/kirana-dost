@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Kirana Dost</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:Roboto;background:#f5f5f5}
+.container{display:flex;gap:20px;padding:20px;justify-content:center;flex-wrap:wrap}
+.panel{background:#fff;border-radius:15px;box-shadow:0 6px 20px rgba(0,0,0,.1);padding:20px;flex:1 1 400px;max-width:480px}
+h2{text-align:center;color:#2e7d32}
+input,select,button{width:100%;padding:12px;margin-top:8px;border-radius:10px;border:1px solid #ccc;font-size:15px}
+button{background:#2e7d32;color:#fff;border:none;cursor:pointer}
+button:hover{background:#1b4d20}
+.chat-box{border:1px solid #ccc;border-radius:10px;padding:10px;height:360px;overflow-y:auto;background:#f9fafb}
+.message{margin:6px 0;padding:10px;border-radius:15px;font-size:14px}
+.bot{background:#e8f5e9}
+.user{background:#2e7d32;color:#fff;text-align:right}
+.input-row{display:flex;gap:10px;margin-top:10px}
+.input-row input{flex:1}
+.input-row button{width:60px}
+table{width:100%;border-collapse:collapse;margin-top:10px}
+th,td{padding:10px;border-bottom:1px solid #ddd;text-align:center}
+th{background:#2e7d32;color:#fff}
+.notice{background:#fff3cd;border-left:5px solid #ffc107}
+.expiredNotice{background:#fdecea;border-left:5px solid #d32f2f}
+.del-btn{background:#c62828;padding:6px 10px;border-radius:6px;font-size:12px}
+.discountedRow{background:#d0f0c0;}
+</style>
+</head>
+<body>
+
+<div class="container">
+
+<div class="panel">
+<h2>🛒 Products</h2>
+<input id="pName" placeholder="Product Name">
+<input id="pQty" type="number" placeholder="Quantity" style="border:1px solid #ccc">
+<div id="qtyWarning" style="color:red; font-size:13px; margin-top:3px; display:flex; align-items:center; gap:4px;"></div>
+<select id="pUnit">
+<option value="kg">kg</option>
+<option value="g">g</option>
+<option value="litre">litre</option>
+<option value="packet">packet</option>
+<option value="piece">piece</option>
+<option value="bottle">bottle</option>
+<option value="box">box</option>
+</select>
+<input id="pExpiry" type="date">
+<button onclick="saveProduct()">💾 Save Product</button>
+<button onclick="clearAllProducts()" style="background:#c62828">🗑 Clear All Products</button>
+<button onclick="openSellPopup()" style="background:#1565c0">🧾 Sell Products</button>
+</div>
+
+<div class="panel">
+<h2>💬 Kirana Dost</h2>
+<div id="chatBox" class="chat-box"></div>
+<div class="input-row">
+<input id="chatInput" placeholder="Ask: show products / expired / discounted">
+<button onclick="sendMessage()">➤</button>
+</div>
+</div>
+
+</div>
+
+<!-- SELL POPUP -->
+<div id="sellPopup" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); justify-content:center; align-items:center;">
+  <div style="background:#fff; padding:20px; border-radius:15px; width:90%; max-width:400px;">
+    <h3 style="text-align:center;color:#2e7d32">Sell Products</h3>
+    <input id="cName" placeholder="Customer Name">
+    <input id="cMobile" placeholder="Mobile Number">
+    <div id="sellProductsList" style="margin-top:10px; max-height:150px; overflow:auto;"></div>
+    <button onclick="sellSelected()">✅ Sell Selected</button>
+    <button onclick="sellAll()" style="background:#ff9800">🛒 Sell All Expiring Soon</button>
+    <button onclick="closeSellPopup()" style="background:#c62828">Cancel</button>
+  </div>
+</div>
+
+<script>
+let products=[];
+const MIN_DISCOUNT=5, MAX_DISCOUNT=20;
+const integerUnits = ["piece", "packet", "bottle", "box"];
+const qtyWarning = document.getElementById("qtyWarning");
+
+// =================== QUANTITY VALIDATION ===================
+function showQtyWarning(message){
+  qtyWarning.innerHTML = `⚠️ ${message}`;
+  pQty.style.borderColor = "red";
+}
+function clearQtyWarning(){
+  qtyWarning.innerHTML = "";
+  pQty.style.borderColor = "#ccc";
+}
+
+// Prevent typing invalid characters
+pQty.addEventListener("keydown", (e) => {
+  const isIntegerUnit = integerUnits.includes(pUnit.value);
+  if(e.key === "-" || (isIntegerUnit && e.key === ".")) e.preventDefault();
+});
+
+// Live validation while typing
+pQty.addEventListener("input", () => {
+  const qty = pQty.value;
+  const isIntegerUnit = integerUnits.includes(pUnit.value);
+
+  if(!qty || +qty <= 0){
+    showQtyWarning("Enter a positive number");
+  } else if(isIntegerUnit && !Number.isInteger(+qty)){
+    showQtyWarning("Enter a positive integer for this unit");
+  } else {
+    clearQtyWarning();
+  }
+});
+
+// Prevent pasting invalid values
+pQty.addEventListener("paste", (e) => {
+  const paste = e.clipboardData.getData("text");
+  const isIntegerUnit = integerUnits.includes(pUnit.value);
+  if(isNaN(paste) || +paste <= 0 || (isIntegerUnit && !Number.isInteger(+paste))){
+    e.preventDefault();
+    showQtyWarning("Enter a valid positive number");
+  }
+});
+
+// =================== BASIC FUNCTIONS ===================
+window.onload=()=>{
+  const saved=localStorage.getItem("kiranaProducts");
+  if(saved) products=JSON.parse(saved);
+  chatBox.innerHTML="";
+  bot("Hello! I am Kirana Dost, your grocery assistant.");
+  applyDailyDiscounts();
+  showExpiringSoon();
+  showExpiredProducts();
+  setInterval(()=>{
+    applyDailyDiscounts();
+    chatBox.innerHTML="";
+    bot("Hello! I am Kirana Dost, your grocery assistant.");
+    showExpiringSoon();
+    showExpiredProducts();
+  },86400000); // daily check
+}
+
+function saveProduct(){
+  if(!pName.value || !pQty.value || !pExpiry.value || !pUnit.value){
+    alert("Fill all fields");
+    return;
+  }
+
+  const qty = +pQty.value;
+  const isIntegerUnit = integerUnits.includes(pUnit.value);
+
+  if(qty <= 0 || (isIntegerUnit && !Number.isInteger(qty))){
+    showQtyWarning("Enter a valid positive " + (isIntegerUnit ? "integer" : "number"));
+    return;
+  }
+
+  products.push({
+    name: pName.value,
+    quantity: qty,
+    unit: pUnit.value,
+    expiry: pExpiry.value,
+    discount: 0
+  });
+
+  localStorage.setItem("kiranaProducts", JSON.stringify(products));
+  pName.value = pQty.value = pExpiry.value = "";
+  pUnit.value = "kg";
+  clearQtyWarning();
+}
+
+function clearAllProducts(){
+  if(!confirm("Delete ALL products?"))return;
+  products=[];localStorage.removeItem("kiranaProducts");
+  chatBox.innerHTML="";bot("Hello! I am Kirana Dost, your grocery assistant.");
+}
+
+function daysLeft(date){
+  const today=new Date();today.setHours(0,0,0,0);
+  const d=new Date(date);d.setHours(0,0,0,0);
+  return Math.floor((d-today)/(1000*60*60*24));
+}
+
+function formatQuantity(q,u){
+  return ["packet","piece","bottle","box"].includes(u)?(q>1?q+" "+u+"s":q+" "+u):q+" "+u;
+}
+
+// =================== DISCOUNTS ===================
+function applyDailyDiscounts(){
+  products.forEach(p=>{
+    const left=daysLeft(p.expiry);
+    if(left===1||left===2){if(!p.discount)p.discount=Math.floor(Math.random()*(MAX_DISCOUNT-MIN_DISCOUNT+1))+MIN_DISCOUNT;}
+    else p.discount=0;
+  });
+  localStorage.setItem("kiranaProducts",JSON.stringify(products));
+}
+
+// =================== SHOW FUNCTIONS ===================
+function showExpiringSoon(){
+  document.querySelectorAll(".notice").forEach(n=>n.remove());
+  const soon=products.filter(p=>daysLeft(p.expiry)===1||daysLeft(p.expiry)===2);
+  if(!soon.length)return;
+  let h=`<div class="message bot notice"><strong>⚠️ Products Expiring Soon</strong><table>
+  <tr><th>Sr</th><th>Product</th><th>Expiry</th><th>Qty</th><th>Days Left</th><th>%</th></tr>`;
+  soon.forEach((p,i)=>{h+=`<tr class="${p.discount?'discountedRow':''}"><td>${i+1}</td><td>${p.name}</td><td>${p.expiry}</td><td>${formatQuantity(p.quantity,p.unit)}</td><td>${daysLeft(p.expiry)}</td><td>${p.discount}%</td></tr>`;});
+  h+=`</table></div>`;chatBox.innerHTML+=h;
+}
+
+function showExpiredProducts(){
+  document.querySelectorAll(".expiredNotice").forEach(n=>n.remove());
+  const expired=products.filter(p=>daysLeft(p.expiry)<0);
+  if(!expired.length)return;
+  let h=`<div class="message bot expiredNotice"><strong>❌ Expired Products</strong><table>
+  <tr><th>Sr</th><th>Product</th><th>Expiry</th><th>Qty</th><th>Days Passed</th></tr>`;
+  expired.forEach((p,i)=>{h+=`<tr><td>${i+1}</td><td>${p.name}</td><td>${p.expiry}</td><td>${formatQuantity(p.quantity,p.unit)}</td><td>${Math.abs(daysLeft(p.expiry))} days ago</td></tr>`;});
+  h+=`</table></div>`;chatBox.innerHTML+=h;
+}
+
+function renderProductsTable(){
+  document.querySelector("#productsTable")?.remove();
+  if(!products.length){bot("No products found");return;}
+  let h=`<table id="productsTable"><tr><th>Sr</th><th>Name</th><th>Qty</th><th>Expiry</th><th>%</th><th>Action</th></tr>`;
+  products.forEach((p,i)=>{h+=`<tr class="${p.discount?'discountedRow':''}"><td>${i+1}</td><td>${p.name}</td><td>${formatQuantity(p.quantity,p.unit)}</td><td>${p.expiry}</td><td>${p.discount}%</td><td><button class="del-btn" onclick="deleteProduct(${i})">❌</button></td></tr>`;});
+  h+="</table>";chatBox.innerHTML+=h;
+}
+
+// =================== CHAT FUNCTIONS ===================
+function user(msg){chatBox.innerHTML+=`<div class="message user">${msg}</div>`;}
+function bot(msg){chatBox.innerHTML+=`<div class="message bot">${msg}</div>`;}
+function sendMessage(){
+  const msg=chatInput.value.trim();
+  if(!msg)return;
+  user(msg);chatInput.value="";
+  process(msg.toLowerCase());
+}
+
+chatInput.addEventListener("keydown",e=>{if(e.key==="Enter")sendMessage();});
+
+function process(msg){
+  if(msg.includes("show products")){renderProductsTable(); return;}
+  if(msg.includes("expired")){showExpiredProducts(); return;}
+  if(msg.includes("discounted")){
+    const discounted=products.filter(p=>p.discount&&p.discount>0);
+    if(!discounted.length)return bot("No discounted products currently");
+    let h=`<div class="message bot notice"><strong>💰 Discounted Products</strong><table>
+    <tr><th>Sr</th><th>Product</th><th>Qty</th><th>Expiry</th><th>%</th></tr>`;
+    discounted.forEach((p,i)=>{h+=`<tr class="discountedRow"><td>${i+1}</td><td>${p.name}</td><td>${formatQuantity(p.quantity,p.unit)}</td><td>${p.expiry}</td><td>${p.discount}%</td></tr>`;});
+    h+=`</table></div>`;chatBox.innerHTML+=h; return;
+  }
+  bot("❓ Command not recognized");
+}
+
+// =================== DELETE PRODUCT ===================
+function deleteProduct(index){
+  if(!confirm("Delete this product?"))return;
+  products.splice(index,1);
+  localStorage.setItem("kiranaProducts",JSON.stringify(products));
+  chatBox.innerHTML="";
+  bot("Hello! I am Kirana Dost, your grocery assistant.");
+  applyDailyDiscounts();
+  showExpiringSoon();
+  showExpiredProducts();
+  renderProductsTable();
+}
+
+// =================== SELL PRODUCTS ===================
+function openSellPopup(){
+  const soon=products.filter(p=>daysLeft(p.expiry)===1||daysLeft(p.expiry)===2);
+  if(!soon.length){alert("No expiring products");return;}
+  sellProductsList.innerHTML="";
+  soon.forEach(p=>{sellProductsList.innerHTML+=`<label><input type="checkbox" value="${p.name}"> ${p.name} (${formatQuantity(p.quantity,p.unit)})</label><br>`;});
+  sellPopup.style.display="flex";
+}
+function closeSellPopup(){sellPopup.style.display="none"; cName.value=cMobile.value="";}
+function sellSelected(){
+  if(!cName.value||!cMobile.value){alert("Enter customer details");return;}
+  const names=[...document.querySelectorAll("#sellProductsList input:checked")].map(c=>c.value);
+  if(!names.length){alert("Select product");return;}
+  products=products.filter(p=>!names.includes(p.name));
+  localStorage.setItem("kiranaProducts",JSON.stringify(products));
+  showSuccessAndRefresh();
+}
+function sellAll(){
+  if(!cName.value||!cMobile.value){alert("Enter customer details");return;}
+  products=products.filter(p=>!(daysLeft(p.expiry)===1||daysLeft(p.expiry)===2));
+  localStorage.setItem("kiranaProducts",JSON.stringify(products));
+  showSuccessAndRefresh();
+}
+function showSuccessAndRefresh(){
+  sellProductsList.innerHTML=`<p style="color:green;font-weight:bold;text-align:center">✅ Products sold successfully!</p>`;
+  setTimeout(()=>{
+    closeSellPopup();
+    chatBox.innerHTML="";
+    bot("Hello! I am Kirana Dost, your grocery assistant.");
+    applyDailyDiscounts();
+    showExpiringSoon();
+    showExpiredProducts();
+    renderProductsTable();
+  },5000);
+}
+</script>
+
+</body>
+</html>
